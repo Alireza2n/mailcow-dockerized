@@ -1,6 +1,6 @@
 <?php
-require_once 'inc/vars.inc.php';
-require_once 'inc/functions.inc.php';
+require_once $_SERVER['DOCUMENT_ROOT'] . '/inc/vars.inc.php';
+require_once $_SERVER['DOCUMENT_ROOT'] . '/inc/functions.inc.php';
 $default_autodiscover_config = $autodiscover_config;
 if(file_exists('inc/vars.local.inc.php')) {
   include_once 'inc/vars.local.inc.php';
@@ -9,7 +9,17 @@ $autodiscover_config = array_merge($default_autodiscover_config, $autodiscover_c
 
 // Redis
 $redis = new Redis();
-$redis->connect('redis-mailcow', 6379);
+try {
+  if (!empty(getenv('REDIS_SLAVEOF_IP'))) {
+    $redis->connect(getenv('REDIS_SLAVEOF_IP'), getenv('REDIS_SLAVEOF_PORT'));
+  }
+  else {
+    $redis->connect('redis-mailcow', 6379);
+  }
+}
+catch (Exception $e) {
+  exit;
+}
 
 error_reporting(0);
 
@@ -21,13 +31,18 @@ if (strpos($data, 'autodiscover/outlook/responseschema') !== false) {
     // Office for macOS does not support EAS
     strpos($_SERVER['HTTP_USER_AGENT'], 'Mac') === false &&
     // Outlook 2013 (version 15) or higher
-    preg_match('/(Outlook|Office).+15\./', $_SERVER['HTTP_USER_AGENT'])
+    preg_match('/(Outlook|Office).+1[5-9]\./', $_SERVER['HTTP_USER_AGENT'])
   ) {
     $autodiscover_config['autodiscoverType'] = 'activesync';
   }
 }
 
-$dsn = $database_type . ":host=" . $database_host . ";dbname=" . $database_name;
+if (getenv('SKIP_SOGO') == "y") {
+  $autodiscover_config['autodiscoverType'] = 'imap';
+}
+
+//$dsn = $database_type . ":host=" . $database_host . ";dbname=" . $database_name;
+$dsn = $database_type . ":unix_socket=" . $database_sock . ";dbname=" . $database_name;
 $opt = [
   PDO::ATTR_ERRMODE            => PDO::ERRMODE_EXCEPTION,
   PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,
@@ -36,61 +51,51 @@ $opt = [
 $pdo = new PDO($dsn, $database_user, $database_pass, $opt);
 $login_user = strtolower(trim($_SERVER['PHP_AUTH_USER']));
 $login_pass = trim(htmlspecialchars_decode($_SERVER['PHP_AUTH_PW']));
-$login_role = check_login($login_user, $login_pass);
 
-if (!isset($_SERVER['PHP_AUTH_USER']) OR $login_role !== "user") {
-  try {
-    $json = json_encode(
-      array(
-        "time" => time(),
-        "ua" => $_SERVER['HTTP_USER_AGENT'],
-        "user" => "none",
-        "service" => "Error: must be authenticated"
-      )
-    );
-    $redis->lPush('AUTODISCOVER_LOG', $json);
-    $redis->lTrim('AUTODISCOVER_LOG', 0, 100);
-  }
-  catch (RedisException $e) {
-    $_SESSION['return'] = array(
-      'type' => 'danger',
-      'msg' => 'Redis: '.$e
-    );
-    return false;
-  }
+if (empty($_SERVER['PHP_AUTH_USER']) || empty($_SERVER['PHP_AUTH_PW'])) {
+  $json = json_encode(
+    array(
+      "time" => time(),
+      "ua" => $_SERVER['HTTP_USER_AGENT'],
+      "user" => "none",
+      "service" => "Error: must be authenticated"
+    )
+  );
+  $redis->lPush('AUTODISCOVER_LOG', $json);
   header('WWW-Authenticate: Basic realm="' . $_SERVER['HTTP_HOST'] . '"');
   header('HTTP/1.0 401 Unauthorized');
   exit(0);
 }
-else {
-  if (isset($_SERVER['PHP_AUTH_USER']) && isset($_SERVER['PHP_AUTH_PW'])) {
-    if ($login_role === "user") {
-      header("Content-Type: application/xml");
-      echo '<?xml version="1.0" encoding="utf-8" ?>' . PHP_EOL;
+
+$login_role = check_login($login_user, $login_pass);
+
+if ($login_role === "user") {
+  header("Content-Type: application/xml");
+  echo '<?xml version="1.0" encoding="utf-8" ?>' . PHP_EOL;
 ?>
 <Autodiscover xmlns="http://schemas.microsoft.com/exchange/autodiscover/responseschema/2006">
 <?php
-      if(!$data) {
-        try {
-          $json = json_encode(
-            array(
-              "time" => time(),
-              "ua" => $_SERVER['HTTP_USER_AGENT'],
-              "user" => $_SERVER['PHP_AUTH_USER'],
-              "service" => "Error: invalid or missing request data"
-            )
-          );
-          $redis->lPush('AUTODISCOVER_LOG', $json);
-          $redis->lTrim('AUTODISCOVER_LOG', 0, 100);
-        }
-        catch (RedisException $e) {
-          $_SESSION['return'] = array(
-            'type' => 'danger',
-            'msg' => 'Redis: '.$e
-          );
-          return false;
-        }
-        list($usec, $sec) = explode(' ', microtime());
+  if(!$data) {
+    try {
+      $json = json_encode(
+        array(
+          "time" => time(),
+          "ua" => $_SERVER['HTTP_USER_AGENT'],
+          "user" => $_SERVER['PHP_AUTH_USER'],
+          "service" => "Error: invalid or missing request data"
+        )
+      );
+      $redis->lPush('AUTODISCOVER_LOG', $json);
+      $redis->lTrim('AUTODISCOVER_LOG', 0, 100);
+    }
+    catch (RedisException $e) {
+      $_SESSION['return'][] = array(
+        'type' => 'danger',
+        'msg' => 'Redis: '.$e
+      );
+      return false;
+    }
+    list($usec, $sec) = explode(' ', microtime());
 ?>
   <Response>
     <Error Time="<?=date('H:i:s', $sec) . substr($usec, 0, strlen($usec) - 2);?>" Id="2477272013">
@@ -101,54 +106,54 @@ else {
   </Response>
 </Autodiscover>
 <?php
-        exit(0);
-      }
-      try {
-        $discover = new SimpleXMLElement($data);
-        $email = $discover->Request->EMailAddress;
-      } catch (Exception $e) {
-        $email = $_SERVER['PHP_AUTH_USER'];
-      }
+    exit(0);
+  }
+  try {
+    $discover = new SimpleXMLElement($data);
+    $email = $discover->Request->EMailAddress;
+  } catch (Exception $e) {
+    $email = $_SERVER['PHP_AUTH_USER'];
+  }
 
-      $username = trim($email);
-      try {
-        $stmt = $pdo->prepare("SELECT `name` FROM `mailbox` WHERE `username`= :username");
-        $stmt->execute(array(':username' => $username));
-        $MailboxData = $stmt->fetch(PDO::FETCH_ASSOC);
-      }
-      catch(PDOException $e) {
-        die("Failed to determine name from SQL");
-      }
-      if (!empty($MailboxData['name'])) {
-        $displayname = $MailboxData['name'];
-      }
-      else {
-        $displayname = $email;
-      }
-      try {
-        $json = json_encode(
-          array(
-            "time" => time(),
-            "ua" => $_SERVER['HTTP_USER_AGENT'],
-            "user" => $_SERVER['PHP_AUTH_USER'],
-            "service" => $autodiscover_config['autodiscoverType']
-          )
-        );
-        $redis->lPush('AUTODISCOVER_LOG', $json);
-        $redis->lTrim('AUTODISCOVER_LOG', 0, 100);
-      }
-      catch (RedisException $e) {
-        $_SESSION['return'] = array(
-          'type' => 'danger',
-          'msg' => 'Redis: '.$e
-        );
-        return false;
-      }
-      if ($autodiscover_config['autodiscoverType'] == 'imap') {
+  $username = trim($email);
+  try {
+    $stmt = $pdo->prepare("SELECT `name` FROM `mailbox` WHERE `username`= :username");
+    $stmt->execute(array(':username' => $username));
+    $MailboxData = $stmt->fetch(PDO::FETCH_ASSOC);
+  }
+  catch(PDOException $e) {
+    die("Failed to determine name from SQL");
+  }
+  if (!empty($MailboxData['name'])) {
+    $displayname = $MailboxData['name'];
+  }
+  else {
+    $displayname = $email;
+  }
+  try {
+    $json = json_encode(
+      array(
+        "time" => time(),
+        "ua" => $_SERVER['HTTP_USER_AGENT'],
+        "user" => $_SERVER['PHP_AUTH_USER'],
+        "service" => $autodiscover_config['autodiscoverType']
+      )
+    );
+    $redis->lPush('AUTODISCOVER_LOG', $json);
+    $redis->lTrim('AUTODISCOVER_LOG', 0, 100);
+  }
+  catch (RedisException $e) {
+    $_SESSION['return'][] = array(
+      'type' => 'danger',
+      'msg' => 'Redis: '.$e
+    );
+    return false;
+  }
+  if ($autodiscover_config['autodiscoverType'] == 'imap') {
 ?>
   <Response xmlns="http://schemas.microsoft.com/exchange/autodiscover/outlook/responseschema/2006a">
     <User>
-      <DisplayName><?=$displayname;?></DisplayName>
+      <DisplayName><?=htmlspecialchars($displayname, ENT_XML1 | ENT_QUOTES, 'UTF-8');?></DisplayName>
     </User>
     <Account>
       <AccountType>email</AccountType>
@@ -175,6 +180,9 @@ else {
         <UsePOPAuth>on</UsePOPAuth>
         <SMTPLast>off</SMTPLast>
       </Protocol>
+    <?php
+    if (getenv('SKIP_SOGO') != "y") {
+    ?>
       <Protocol>
         <Type>CalDAV</Type>
         <Server>https://<?=$autodiscover_config['caldav']['server'];?><?php if ($autodiscover_config['caldav']['port'] != 443) echo ':'.$autodiscover_config['caldav']['port']; ?>/SOGo/dav/<?=$email;?>/</Server>
@@ -187,16 +195,19 @@ else {
         <DomainRequired>off</DomainRequired>
         <LoginName><?=$email;?></LoginName>
       </Protocol>
+    <?php
+    }
+    ?>
     </Account>
   </Response>
 <?php
-      }
-      else if ($autodiscover_config['autodiscoverType'] == 'activesync') {
+  }
+  else if ($autodiscover_config['autodiscoverType'] == 'activesync') {
 ?>
   <Response xmlns="http://schemas.microsoft.com/exchange/autodiscover/mobilesync/responseschema/2006">
     <Culture>en:en</Culture>
     <User>
-      <DisplayName><?=$displayname;?></DisplayName>
+      <DisplayName><?=htmlspecialchars($displayname, ENT_XML1 | ENT_QUOTES, 'UTF-8');?></DisplayName>
       <EMailAddress><?=$email;?></EMailAddress>
     </User>
     <Action>
@@ -210,11 +221,9 @@ else {
     </Action>
   </Response>
 <?php
-      }
+  }
 ?>
 </Autodiscover>
 <?php
-    }
-  }
 }
 ?>

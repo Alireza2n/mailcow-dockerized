@@ -10,9 +10,11 @@ define('state_optional', " <sup>2</sup>");
 if (isset($_SESSION['mailcow_cc_role']) && ($_SESSION['mailcow_cc_role'] == "admin"|| $_SESSION['mailcow_cc_role'] == "domainadmin")) {
 
 $domains = mailbox('get', 'domains');
-foreach(mailbox('get', 'domains') as $dn) {
-  $domains = array_merge($domains, mailbox('get', 'alias_domains', $dn));
+$alias_domains = array();
+foreach($domains as $dn) {
+  $alias_domains = array_merge($alias_domains, mailbox('get', 'alias_domains', $dn));
 }
+$domains = array_merge($domains, $alias_domains);
 
 if (isset($_GET['domain'])) {
   if (is_valid_domain_name($_GET['domain'])) {
@@ -21,12 +23,12 @@ if (isset($_GET['domain'])) {
     }
     else {
       echo "No such domain in context";
-      die();
+      exit();
     }
   }
   else {
     echo "Invalid domain name";
-    die();
+    exit();
   }
 }
 
@@ -73,8 +75,8 @@ if (!isset($autodiscover_config['sieve'])) {
 }
 
 // Init records array
-$spf_link = '<a href="http://www.openspf.org/SPF_Record_Syntax" target="_blank">SPF Record Syntax</a><br />';
-$dmarc_link = '<a href="http://www.kitterman.com/dmarc/assistant.html" target="_blank">DMARC Assistant</a>';
+$spf_link = '<a href="https://en.wikipedia.org/wiki/Sender_Policy_Framework" target="_blank">SPF Record Syntax</a><br />';
+$dmarc_link = '<a href="https://www.kitterman.com/dmarc/assistant.html" target="_blank">DMARC Assistant</a>';
 
 $records = array();
 if ($_SESSION['mailcow_cc_role'] == "admin") {
@@ -92,7 +94,7 @@ if ($_SESSION['mailcow_cc_role'] == "admin") {
     $records[] = array(
       $mailcow_hostname,
       'AAAA',
-      $ip6
+      expand_ipv6($ip6)
     );
     $records[] = array(
       $ptr6,
@@ -105,76 +107,80 @@ if ($_SESSION['mailcow_cc_role'] == "admin") {
     'TLSA',
     generate_tlsa_digest($autodiscover_config['smtp']['server'], 25, 1)
   );
-  $records[] = array(
-    '_'.$https_port.
-    '._tcp.'.$mailcow_hostname,
-    'TLSA',
-    generate_tlsa_digest($mailcow_hostname, $https_port)
-  );
-  $records[] = array(
-    '_'.$autodiscover_config['pop3']['tlsport'].
-    '._tcp.'.$autodiscover_config['pop3']['server'],
-    'TLSA',
-    generate_tlsa_digest($autodiscover_config['pop3']['server'], $autodiscover_config['pop3']['tlsport'], 1)
-  );
-  $records[] = array(
-    '_'.$autodiscover_config['imap']['tlsport'].
-    '._tcp.'.$autodiscover_config['imap']['server'],
-    'TLSA',
-    generate_tlsa_digest($autodiscover_config['imap']['server'], $autodiscover_config['imap']['tlsport'], 1)
-  );
-  $records[] = array(
-    '_'.$autodiscover_config['smtp']['port'].
-    '._tcp.'.$autodiscover_config['smtp']['server'],
-    'TLSA',
-    generate_tlsa_digest($autodiscover_config['smtp']['server'], $autodiscover_config['smtp']['port'])
-  );
-  $records[] = array(
-    '_'.$autodiscover_config['smtp']['tlsport'].
-    '._tcp.'.$autodiscover_config['smtp']['server'],
-    'TLSA',
-    generate_tlsa_digest($autodiscover_config['smtp']['server'], $autodiscover_config['smtp']['tlsport'], 1)
-  );
-  $records[] = array(
-    '_'.$autodiscover_config['imap']['port'].
-    '._tcp.'.$autodiscover_config['imap']['server'],
-    'TLSA',
-    generate_tlsa_digest($autodiscover_config['imap']['server'], $autodiscover_config['imap']['port'])
-  );
-  $records[] = array(
-    '_'.$autodiscover_config['pop3']['port'].
-    '._tcp.'.$autodiscover_config['pop3']['server'],
-    'TLSA',
-    generate_tlsa_digest($autodiscover_config['pop3']['server'], $autodiscover_config['pop3']['port'])
-  );
-  $records[] = array(
-    '_'.$autodiscover_config['sieve']['port'].
-    '._tcp.'.$autodiscover_config['sieve']['server'],
-    'TLSA',
-    generate_tlsa_digest($autodiscover_config['sieve']['server'], $autodiscover_config['sieve']['port'], 1)
-  );
+  if (!in_array($domain, $alias_domains)) {
+    $records[] = array(
+      '_'.$https_port.
+      '._tcp.'.$mailcow_hostname,
+      'TLSA',
+      generate_tlsa_digest($mailcow_hostname, $https_port)
+    );
+    $records[] = array(
+      '_'.$autodiscover_config['pop3']['tlsport'].
+      '._tcp.'.$autodiscover_config['pop3']['server'],
+      'TLSA',
+      generate_tlsa_digest($autodiscover_config['pop3']['server'], $autodiscover_config['pop3']['tlsport'], 1)
+    );
+    $records[] = array(
+      '_'.$autodiscover_config['imap']['tlsport'].
+      '._tcp.'.$autodiscover_config['imap']['server'],
+      'TLSA',
+      generate_tlsa_digest($autodiscover_config['imap']['server'], $autodiscover_config['imap']['tlsport'], 1)
+    );
+    $records[] = array(
+      '_'.$autodiscover_config['smtp']['port'].
+      '._tcp.'.$autodiscover_config['smtp']['server'],
+      'TLSA',
+      generate_tlsa_digest($autodiscover_config['smtp']['server'], $autodiscover_config['smtp']['port'])
+    );
+    $records[] = array(
+      '_'.$autodiscover_config['smtp']['tlsport'].
+      '._tcp.'.$autodiscover_config['smtp']['server'],
+      'TLSA',
+      generate_tlsa_digest($autodiscover_config['smtp']['server'], $autodiscover_config['smtp']['tlsport'], 1)
+    );
+    $records[] = array(
+      '_'.$autodiscover_config['imap']['port'].
+      '._tcp.'.$autodiscover_config['imap']['server'],
+      'TLSA',
+      generate_tlsa_digest($autodiscover_config['imap']['server'], $autodiscover_config['imap']['port'])
+    );
+    $records[] = array(
+      '_'.$autodiscover_config['pop3']['port'].
+      '._tcp.'.$autodiscover_config['pop3']['server'],
+      'TLSA',
+      generate_tlsa_digest($autodiscover_config['pop3']['server'], $autodiscover_config['pop3']['port'])
+    );
+    $records[] = array(
+      '_'.$autodiscover_config['sieve']['port'].
+      '._tcp.'.$autodiscover_config['sieve']['server'],
+      'TLSA',
+      generate_tlsa_digest($autodiscover_config['sieve']['server'], $autodiscover_config['sieve']['port'], 1)
+    );
+  }
 }
 $records[] = array(
   $domain,
   'MX',
   $mailcow_hostname
 );
-$records[] = array(
-  'autodiscover.'.$domain,
-  'CNAME',
-  $mailcow_hostname
-);
-$records[] = array(
-  '_autodiscover._tcp.'.$domain,
-  'SRV',
-  $mailcow_hostname.
-  ' '.$https_port
-);
-$records[] = array(
-  'autoconfig.'.$domain,
-  'CNAME',
-  $mailcow_hostname
-);
+if (!in_array($domain, $alias_domains)) {
+  $records[] = array(
+    'autodiscover.'.$domain,
+    'CNAME',
+    $mailcow_hostname
+  );
+  $records[] = array(
+    '_autodiscover._tcp.'.$domain,
+    'SRV',
+    $mailcow_hostname.
+    ' '.$https_port
+  );
+  $records[] = array(
+    'autoconfig.'.$domain,
+    'CNAME',
+    $mailcow_hostname
+  );
+}
 $records[] = array(
   $domain,
   'TXT',
@@ -195,74 +201,76 @@ if (!empty($dkim = dkim('details', $domain))) {
     $dkim['dkim_txt']
   );
 }
-$current_records = dns_get_record('_pop3._tcp.' . $domain, DNS_SRV);
-if (count($current_records) == 0 || $current_records[0]['target'] != '') {
-  if ($autodiscover_config['pop3']['tlsport'] != '110') {
+if (!in_array($domain, $alias_domains)) {
+  $current_records = dns_get_record('_pop3._tcp.' . $domain, DNS_SRV);
+  if (count($current_records) == 0 || $current_records[0]['target'] != '') {
+    if ($autodiscover_config['pop3']['tlsport'] != '110') {
+      $records[] = array(
+        '_pop3._tcp.' . $domain,
+        'SRV',
+        $autodiscover_config['pop3']['server'] . ' ' . $autodiscover_config['pop3']['tlsport']
+      );
+    }
+  }
+  else {
     $records[] = array(
       '_pop3._tcp.' . $domain,
       'SRV',
-      $autodiscover_config['pop3']['server'] . ' ' . $autodiscover_config['pop3']['tlsport']
+      '. 0'
     );
   }
-}
-else {
-  $records[] = array(
-    '_pop3._tcp.' . $domain,
-    'SRV',
-    '. 0'
-  );
-}
-$current_records = dns_get_record('_pop3s._tcp.' . $domain, DNS_SRV);
-if (count($current_records) == 0 || $current_records[0]['target'] != '') {
-  if ($autodiscover_config['pop3']['port'] != '995') {
+  $current_records = dns_get_record('_pop3s._tcp.' . $domain, DNS_SRV);
+  if (count($current_records) == 0 || $current_records[0]['target'] != '') {
+    if ($autodiscover_config['pop3']['port'] != '995') {
+      $records[] = array(
+        '_pop3s._tcp.' . $domain,
+        'SRV',
+        $autodiscover_config['pop3']['server'] . ' ' . $autodiscover_config['pop3']['port']
+      );
+    }
+  }
+  else {
     $records[] = array(
       '_pop3s._tcp.' . $domain,
       'SRV',
-      $autodiscover_config['pop3']['server'] . ' ' . $autodiscover_config['pop3']['port']
+      '. 0'
     );
   }
-}
-else {
-  $records[] = array(
-    '_pop3s._tcp.' . $domain,
-    'SRV',
-    '. 0'
-  );
-}
-if ($autodiscover_config['imap']['tlsport'] != '143') {
-  $records[] = array(
-    '_imap._tcp.' . $domain,
-    'SRV',
-    $autodiscover_config['imap']['server'] . ' ' . $autodiscover_config['imap']['tlsport']
-  );
-}
-if ($autodiscover_config['imap']['port'] != '993') {
-  $records[] = array(
-    '_imaps._tcp.' . $domain,
-    'SRV',
-    $autodiscover_config['imap']['server'] . ' ' . $autodiscover_config['imap']['port']
-  );
-}
-if ($autodiscover_config['smtp']['tlsport'] != '587') {
-  $records[] = array(
-    '_submission._tcp.' . $domain,
-    'SRV',
-    $autodiscover_config['smtp']['server'] . ' ' . $autodiscover_config['smtp']['tlsport']
-  );
-}
-if ($autodiscover_config['smtp']['port'] != '465') {
-  $records[] = array(
-    '_smtps._tcp.' . $domain,
-    'SRV',
-    $autodiscover_config['smtp']['server'] . ' ' . $autodiscover_config['smtp']['port']
-  );
-}
-if ($autodiscover_config['sieve']['port'] != '4190') {
-  $records[] = array(
-    '_sieve._tcp.' . $domain,
-    'SRV',
-    $autodiscover_config['sieve']['server'] . ' ' . $autodiscover_config['sieve']['port']
-  );
+  if ($autodiscover_config['imap']['tlsport'] != '143') {
+    $records[] = array(
+      '_imap._tcp.' . $domain,
+      'SRV',
+      $autodiscover_config['imap']['server'] . ' ' . $autodiscover_config['imap']['tlsport']
+    );
+  }
+  if ($autodiscover_config['imap']['port'] != '993') {
+    $records[] = array(
+      '_imaps._tcp.' . $domain,
+      'SRV',
+      $autodiscover_config['imap']['server'] . ' ' . $autodiscover_config['imap']['port']
+    );
+  }
+  if ($autodiscover_config['smtp']['tlsport'] != '587') {
+    $records[] = array(
+      '_submission._tcp.' . $domain,
+      'SRV',
+      $autodiscover_config['smtp']['server'] . ' ' . $autodiscover_config['smtp']['tlsport']
+    );
+  }
+  if ($autodiscover_config['smtp']['port'] != '465') {
+    $records[] = array(
+      '_smtps._tcp.' . $domain,
+      'SRV',
+      $autodiscover_config['smtp']['server'] . ' ' . $autodiscover_config['smtp']['port']
+    );
+  }
+  if ($autodiscover_config['sieve']['port'] != '4190') {
+    $records[] = array(
+      '_sieve._tcp.' . $domain,
+      'SRV',
+      $autodiscover_config['sieve']['server'] . ' ' . $autodiscover_config['sieve']['port']
+    );
+  }
 }
 
 $record_types = array(
@@ -294,7 +302,7 @@ $data_field = array(
       <th><?=$lang['diagnostics']['dns_records_status'];?></th>
     </tr>
 <?php
-foreach ($records as $record) {
+foreach ($records as &$record) {
   $record[1] = strtoupper($record[1]);
   $state = state_missing;
   if ($record[1] == 'TLSA') {
@@ -327,6 +335,11 @@ foreach ($records as $record) {
       }
       unset($current);
     }
+    elseif ($record[1] == 'AAAA') {
+      foreach ($currents as &$current) {
+        $current['ipv6'] = expand_ipv6($current['ipv6']);
+      }
+    }
   }
 
   if ($record[1] == 'CNAME' && count($currents) == 0) {
@@ -338,8 +351,8 @@ foreach ($records as $record) {
         $currents = array(array('host' => $record[0], 'class' => 'IN', 'type' => 'CNAME', 'target' => $record[2]));
         $aaaa = dns_get_record($record[0], DNS_AAAA);
         $cname = dns_get_record($record[2], DNS_AAAA);
-        if (count($aaaa) == 0 || count($cname) == 0 || $aaaa[0]['ipv6'] != $cname[0]['ipv6']) {
-          $currents[0]['target'] = $aaaa[0]['ipv6'] . ' <sup>1</sup>';
+        if (count($aaaa) == 0 || count($cname) == 0 || expand_ipv6($aaaa[0]['ipv6']) != expand_ipv6($cname[0]['ipv6'])) {
+          $currents[0]['target'] = expand_ipv6($aaaa[0]['ipv6']) . ' <sup>1</sup>';
         }
       }
       else {
@@ -360,7 +373,7 @@ foreach ($records as $record) {
       $record[2] == $spf_link) {
         $state = state_nomatch;
         $rslt = get_spf_allowed_hosts($record[0]);
-        if(in_array($ip, $rslt) && in_array($ip6, $rslt)){
+        if(in_array($ip, $rslt) && in_array(expand_ipv6($ip6), $rslt)){
             $state = state_good;
         }
         $state .= '<br />' . $current[$data_field[$current['type']]].state_optional;
@@ -368,8 +381,9 @@ foreach ($records as $record) {
     elseif ($current['type'] == 'TXT' &&
       stripos($current['txt'], 'v=dkim') === 0 &&
       stripos($record[2], 'v=dkim') === 0) {
-        $current['txt'] = str_replace(' ', '', $current['txt']);
-        if ($current[$data_field[$current['type']]] == $record[2]) {
+        preg_match('/v=DKIM1;.*k=rsa;.*p=([^;]*).*/i', $current[$data_field[$current['type']]], $dkim_matches_current);
+        preg_match('/v=DKIM1;.*k=rsa;.*p=([^;]*).*/i', $record[2], $dkim_matches_good);
+        if ($dkim_matches_current[1] == $dkim_matches_good[1]) {
           $state = state_good;
         }
     }
@@ -402,9 +416,42 @@ foreach ($records as $record) {
     <td class="dns-found">%s</td>
     <td class="dns-recommended">%s</td>
   </tr>', $record[0], $record[1], $record[2], $state);
+  $record[3] = explode('<br />', $state);
 }
+unset($record);
 ?>
   </table>
+<?php
+$data = sprintf("\$ORIGIN %s.\n", $domain);
+foreach ($records as $record) {
+  if ($domain == substr($record[0], -strlen($domain))) {
+    $label = substr($record[0], 0, -strlen($domain)-1);
+    $val = $record[2];
+    if (strlen($label) == 0)
+      $label = "@";
+    $vals = array();
+    if(strpos($val, "<a") !== FALSE) {
+      if(is_array($record[3]) && count($record[3]) == 1 && $record[3][0] == state_optional)
+      {
+        $record[3][0] = "**TODO**";
+        $label = ';' . $label;
+      }
+      foreach ($record[3] as $val) {
+        $val = str_replace(state_optional, '', $val);
+        $val = str_replace(state_good, '', $val);
+        if (strlen($val) > 0)
+          $vals[] = sprintf("%s\tIN\t%s\t%s\n", $label, $record[1], $val);
+      }
+    } else {
+      $vals[] = sprintf("%s\tIN\t%s\t%s\n", $label, $record[1], $val);
+    }
+    foreach ($vals as $val) {
+      $data .= str_replace($domain, $domain . '.', $val);
+    }
+  }
+}
+echo '<a target="_blank" href="data:text/plain;base64,' . base64_encode($data) .'">Download</a>';
+?>
 </div>
 <p class="help-block">
 <sup>1</sup> <?=$lang['diagnostics']['cname_from_a'];?><br />
@@ -413,6 +460,6 @@ foreach ($records as $record) {
 <?php
 } else {
   echo "Session invalid";
-  die();
+  exit();
 }
 ?>
